@@ -1,6 +1,15 @@
-import { useState } from 'react'
-import { Building2, Mail, MapPin, Phone, Plus, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { ROLES, useMutations, useQuery, useUser, type Role } from 'deepspace'
+import {
+  Building2,
+  Mail,
+  MapPin,
+  Pencil,
+  Phone,
+  Plus,
+  Trash2,
+} from 'lucide-react'
+
 import {
   Button,
   ConfirmModal,
@@ -46,24 +55,46 @@ const EMPTY_FORM: ClientFormData = {
 interface ClientModalProps {
   open: boolean
   onClose: () => void
-  onCreate: (data: ClientFormData) => Promise<boolean>
+  onSubmit: (data: ClientFormData) => Promise<boolean>
+  initialData?: ClientFormData
+  mode?: 'create' | 'edit'
 }
 
-function ClientModal({ open, onClose, onCreate }: ClientModalProps) {
-  const [form, setForm] = useState<ClientFormData>(EMPTY_FORM)
-  const [creating, setCreating] = useState(false)
+function ClientModal({
+  open,
+  onClose,
+  onSubmit,
+  initialData = EMPTY_FORM,
+  mode = 'create',
+}: ClientModalProps) {
+  const [form, setForm] = useState<ClientFormData>(initialData)
+  const [saving, setSaving] = useState(false)
 
-  const updateField = (field: keyof ClientFormData, value: string) => {
-    setForm((current) => ({ ...current, [field]: value }))
+  useEffect(() => {
+    if (open) {
+      setForm(initialData)
+    }
+  }, [open, initialData])
+
+  const updateField = (
+    field: keyof ClientFormData,
+    value: string,
+  ) => {
+    setForm((current) => ({
+      ...current,
+      [field]: value,
+    }))
   }
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || creating) return
+    if (!form.name.trim() || saving) {
+      return
+    }
 
-    setCreating(true)
+    setSaving(true)
 
     try {
-      const success = await onCreate({
+      const success = await onSubmit({
         name: form.name.trim(),
         company: form.company.trim(),
         email: form.email.trim(),
@@ -71,81 +102,130 @@ function ClientModal({ open, onClose, onCreate }: ClientModalProps) {
         address: form.address.trim(),
       })
 
-      if (!success) return
+      if (!success) {
+        return
+      }
 
-      setForm(EMPTY_FORM)
+      if (mode === 'create') {
+        setForm(EMPTY_FORM)
+      }
+
       onClose()
     } finally {
-      setCreating(false)
+      setSaving(false)
     }
   }
 
+  const handleClose = () => {
+    if (saving) {
+      return
+    }
+
+    onClose()
+  }
+
   return (
-    <Modal open={open} onClose={creating ? () => undefined : onClose} size="sm">
+    <Modal
+      open={open}
+      onClose={handleClose}
+      size="sm"
+    >
       <Modal.Header>
-        <Modal.Title>Add Client</Modal.Title>
+        <Modal.Title>
+          {mode === 'edit' ? 'Edit Client' : 'Add Client'}
+        </Modal.Title>
       </Modal.Header>
 
       <Modal.Body>
         <div className="space-y-4">
           <div>
-            <Label htmlFor="client-name" className="mb-2 block">
+            <Label
+              htmlFor="client-name"
+              className="mb-2 block"
+            >
               Client name
             </Label>
+
             <Input
               id="client-name"
               value={form.name}
-              onChange={(event) => updateField('name', event.target.value)}
+              onChange={(event) =>
+                updateField('name', event.target.value)
+              }
               placeholder="Acme Corporation"
               autoFocus
             />
           </div>
 
           <div>
-            <Label htmlFor="client-company" className="mb-2 block">
+            <Label
+              htmlFor="client-company"
+              className="mb-2 block"
+            >
               Company
             </Label>
+
             <Input
               id="client-company"
               value={form.company}
-              onChange={(event) => updateField('company', event.target.value)}
+              onChange={(event) =>
+                updateField('company', event.target.value)
+              }
               placeholder="Acme Inc."
             />
           </div>
 
           <div>
-            <Label htmlFor="client-email" className="mb-2 block">
+            <Label
+              htmlFor="client-email"
+              className="mb-2 block"
+            >
               Email
             </Label>
+
             <Input
               id="client-email"
               type="email"
               value={form.email}
-              onChange={(event) => updateField('email', event.target.value)}
+              onChange={(event) =>
+                updateField('email', event.target.value)
+              }
               placeholder="billing@acme.com"
             />
           </div>
 
           <div>
-            <Label htmlFor="client-phone" className="mb-2 block">
+            <Label
+              htmlFor="client-phone"
+              className="mb-2 block"
+            >
               Phone
             </Label>
+
             <Input
               id="client-phone"
               value={form.phone}
-              onChange={(event) => updateField('phone', event.target.value)}
+              onChange={(event) =>
+                updateField('phone', event.target.value)
+              }
               placeholder="+1 555 123 4567"
             />
           </div>
 
           <div>
-            <Label htmlFor="client-address" className="mb-2 block">
+            <Label
+              htmlFor="client-address"
+              className="mb-2 block"
+            >
               Address
             </Label>
+
             <Textarea
               id="client-address"
               value={form.address}
-              onChange={(event) => updateField('address', event.target.value)}
+              onChange={(event) =>
+                updateField('address', event.target.value)
+              }
               placeholder="Client billing address"
               rows={3}
             />
@@ -154,16 +234,20 @@ function ClientModal({ open, onClose, onCreate }: ClientModalProps) {
       </Modal.Body>
 
       <Modal.Footer>
-        <Button variant="secondary" onClick={onClose} disabled={creating}>
+        <Button
+          variant="secondary"
+          onClick={handleClose}
+          disabled={saving}
+        >
           Cancel
         </Button>
 
         <Button
           onClick={() => void handleSubmit()}
           disabled={!form.name.trim()}
-          loading={creating}
+          loading={saving}
         >
-          Add Client
+          {mode === 'edit' ? 'Save Changes' : 'Add Client'}
         </Button>
       </Modal.Footer>
     </Modal>
@@ -178,6 +262,8 @@ export default function ClientsPage() {
   const toast = useToast()
 
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [editTarget, setEditTarget] =
+  useState<ClientRecord | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<ClientRecord | null>(null)
   const [deleting, setDeleting] = useState(false)
 
@@ -186,8 +272,11 @@ export default function ClientsPage() {
     orderDir: 'desc',
   })
 
-  const { createConfirmed, removeConfirmed } =
-    useMutations<Client>('clients')
+  const {
+    createConfirmed,
+    putConfirmed,
+    removeConfirmed,
+  } = useMutations<Client>('clients')
 
   const handleCreate = async (data: ClientFormData): Promise<boolean> => {
     if (!user) {
@@ -207,6 +296,41 @@ export default function ClientsPage() {
       toast.error(
         'Could not add client',
         error instanceof Error ? error.message : 'Please try again.',
+      )
+
+      return false
+    }
+  }
+
+  const handleEdit = async (
+    data: ClientFormData,
+  ): Promise<boolean> => {
+    if (!editTarget) {
+      return false
+    }
+
+    try {
+      await putConfirmed(editTarget.recordId, {
+        name: data.name,
+        company: data.company,
+        email: data.email,
+        phone: data.phone,
+        address: data.address,
+      })
+
+      toast.success(
+        'Client updated',
+        `${data.name} was updated successfully.`,
+      )
+
+      setEditTarget(null)
+      return true
+    } catch (error) {
+      toast.error(
+        'Could not update client',
+        error instanceof Error
+          ? error.message
+          : 'Please try again.',
       )
 
       return false
@@ -370,23 +494,26 @@ export default function ClientsPage() {
       <ClientModal
         open={showCreateModal}
         onClose={() => setShowCreateModal(false)}
-        onCreate={handleCreate}
+        onSubmit={handleCreate}
+        mode="create"
       />
 
-      <ConfirmModal
-        open={deleteTarget !== null}
-        onClose={() => {
-          if (!deleting) setDeleteTarget(null)
-        }}
-        onConfirm={() => void handleDelete()}
-        title={
-          deleteTarget
-            ? `Delete ${deleteTarget.data.name}?`
-            : 'Delete client?'
+      <ClientModal
+        open={editTarget !== null}
+        onClose={() => setEditTarget(null)}
+        onSubmit={handleEdit}
+        mode="edit"
+        initialData={
+          editTarget
+            ? {
+                name: editTarget.data.name,
+                company: editTarget.data.company ?? '',
+                email: editTarget.data.email ?? '',
+                phone: editTarget.data.phone ?? '',
+                address: editTarget.data.address ?? '',
+              }
+            : EMPTY_FORM
         }
-        description="This client will be permanently removed."
-        confirmText="Delete"
-        loading={deleting}
       />
     </div>
   )

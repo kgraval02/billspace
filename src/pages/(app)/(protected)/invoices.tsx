@@ -1,6 +1,7 @@
-import { FileText, Plus } from 'lucide-react'
+import { FileText, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { useMutations, useQuery, useUser } from 'deepspace'
+import { Link } from 'react-router-dom'
 import {
   Badge,
   Button,
@@ -45,11 +46,29 @@ interface LineItemForm {
   unitPrice: string
 }
 
+const EMPTY_LINE_ITEM: LineItemForm = {
+  description: '',
+  quantity: '1',
+  unitPrice: '',
+}
+
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD',
   }).format(amount)
+}
+
+function getDisplayStatus(invoice: Invoice) {
+  if (
+    invoice.status !== 'paid' &&
+    invoice.dueDate &&
+    new Date(`${invoice.dueDate}T23:59:59`) < new Date()
+  ) {
+    return 'overdue'
+  }
+
+  return invoice.status
 }
 
 export default function InvoicesPage() {
@@ -59,11 +78,7 @@ export default function InvoicesPage() {
   const [clientId, setClientId] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [lineItems, setLineItems] = useState<LineItemForm[]>([
-    {
-      description: '',
-      quantity: '1',
-      unitPrice: '',
-    },
+    { ...EMPTY_LINE_ITEM },
   ])
   const [creating, setCreating] = useState(false)
 
@@ -77,17 +92,23 @@ export default function InvoicesPage() {
     orderDir: 'desc',
   })
 
+  const { records: invoiceItems } =
+  useQuery<InvoiceItem>('invoiceItems')
+
   const {
     createConfirmed: createInvoice,
     putConfirmed: updateInvoice,
+    removeConfirmed: removeInvoice,
   } = useMutations<Invoice>('invoices')
 
-  const { createConfirmed: createInvoiceItem } =
-  useMutations<InvoiceItem>('invoiceItems')
+  const {
+    createConfirmed: createInvoiceItem,
+    removeConfirmed: removeInvoiceItem,
+  } = useMutations<InvoiceItem>('invoiceItems')
 
   const total = lineItems.reduce((sum, item) => {
-  const quantity = Number(item.quantity) || 0
-  const unitPrice = Number(item.unitPrice) || 0
+    const quantity = Number(item.quantity) || 0
+    const unitPrice = Number(item.unitPrice) || 0
 
     return sum + quantity * unitPrice
   }, 0)
@@ -109,17 +130,15 @@ export default function InvoicesPage() {
   const addLineItem = () => {
     setLineItems((current) => [
       ...current,
-      {
-        description: '',
-        quantity: '1',
-        unitPrice: '',
-      },
+      { ...EMPTY_LINE_ITEM },
     ])
   }
 
   const removeLineItem = (index: number) => {
     setLineItems((current) => {
-      if (current.length === 1) return current
+      if (current.length === 1) {
+        return current
+      }
 
       return current.filter(
         (_, itemIndex) => itemIndex !== index,
@@ -127,8 +146,16 @@ export default function InvoicesPage() {
     })
   }
 
+  const resetForm = () => {
+    setClientId('')
+    setDueDate('')
+    setLineItems([{ ...EMPTY_LINE_ITEM }])
+  }
+
   const handleCreate = async () => {
-    if (!user || creating) return
+    if (!user || creating) {
+      return
+    }
 
     const client = clients.find(
       (candidate) => candidate.recordId === clientId,
@@ -141,7 +168,12 @@ export default function InvoicesPage() {
         Number(item.unitPrice) >= 0,
     )
 
-    if (!client || !dueDate || validItems.length === 0 || total <= 0) {
+    if (
+      !client ||
+      !dueDate ||
+      validItems.length === 0 ||
+      total <= 0
+    ) {
       return
     }
 
@@ -180,16 +212,7 @@ export default function InvoicesPage() {
         }),
       )
 
-      setClientId('')
-      setDueDate('')
-      setLineItems([
-        {
-          description: '',
-          quantity: '1',
-          unitPrice: '',
-        },
-      ])
-
+      resetForm()
       setShowCreate(false)
     } finally {
       setCreating(false)
@@ -205,9 +228,59 @@ export default function InvoicesPage() {
         status: newStatus,
       })
     } catch (error) {
-      console.error('Failed to update invoice status:', error)
+      console.error(
+        'Failed to update invoice status:',
+        error,
+      )
     }
   }
+
+  const handleDeleteInvoice = async (
+    invoiceId: string,
+    invoiceNumber: string,
+  ) => {
+    const confirmed = window.confirm(
+      `Delete ${invoiceNumber}? This action cannot be undone.`,
+    )
+
+    if (!confirmed) {
+      return
+    }
+
+    try {
+      const relatedItems = invoiceItems.filter(
+        (item) => item.data.invoiceId === invoiceId,
+      )
+
+      await Promise.all(
+        relatedItems.map((item) =>
+          removeInvoiceItem(item.recordId),
+        ),
+      )
+
+      await removeInvoice(invoiceId)
+    } catch (error) {
+      console.error(
+        'Failed to delete invoice:',
+        error,
+      )
+    }
+  }
+
+  const handleCloseCreate = () => {
+    if (creating) {
+      return
+    }
+
+    setShowCreate(false)
+  }
+
+  const hasValidLineItem = lineItems.some(
+    (item) =>
+      item.description.trim() &&
+      Number(item.quantity) > 0 &&
+      Number(item.unitPrice) >= 0,
+  )
 
   const isLoading = status === 'loading'
 
@@ -234,6 +307,12 @@ export default function InvoicesPage() {
               New Invoice
             </Button>
           </div>
+
+          {clients.length === 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              Add a client before creating an invoice.
+            </p>
+          )}
         </div>
       </div>
 
@@ -248,6 +327,14 @@ export default function InvoicesPage() {
             title="No invoices yet"
             description="Create your first invoice to start tracking billing."
             icon={<FileText aria-hidden="true" />}
+            action={
+              clients.length > 0
+                ? {
+                    label: 'New invoice',
+                    onClick: () => setShowCreate(true),
+                  }
+                : undefined
+            }
           />
         ) : (
           <div className="overflow-hidden rounded-xl border border-border">
@@ -255,87 +342,139 @@ export default function InvoicesPage() {
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-border bg-muted/40">
                   <tr>
-                    <th className="px-4 py-3">Invoice</th>
-                    <th className="px-4 py-3">Client</th>
-                    <th className="px-4 py-3">Due Date</th>
-                    <th className="px-4 py-3">Total</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3">Actions</th>
+                    <th className="px-4 py-3">
+                      Invoice
+                    </th>
+                    <th className="px-4 py-3">
+                      Client
+                    </th>
+                    <th className="px-4 py-3">
+                      Due Date
+                    </th>
+                    <th className="px-4 py-3">
+                      Total
+                    </th>
+                    <th className="px-4 py-3">
+                      Status
+                    </th>
+                    <th className="px-4 py-3">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
 
                 <tbody>
-                  {invoices.map((invoice) => (
-                    <tr
-                      key={invoice.recordId}
-                      className="border-b border-border last:border-0"
-                    >
-                      <td className="px-4 py-4 font-medium">
-                        {invoice.data.invoiceNumber}
-                      </td>
+                  {invoices.map((invoice) => {
+                    const displayStatus =
+                      getDisplayStatus(invoice.data)
 
-                      <td className="px-4 py-4">
-                        {invoice.data.clientName}
-                      </td>
+                    return (
+                      <tr
+                        key={invoice.recordId}
+                        className="border-b border-border last:border-0"
+                      >
+                        <td className="px-4 py-4 font-medium">
+                          {invoice.data.invoiceNumber}
+                        </td>
 
-                      <td className="px-4 py-4">
-                        {invoice.data.dueDate}
-                      </td>
+                        <td className="px-4 py-4">
+                          {invoice.data.clientName}
+                        </td>
 
-                      <td className="px-4 py-4 font-medium">
-                        {formatCurrency(invoice.data.total)}
-                      </td>
+                        <td className="px-4 py-4">
+                          {invoice.data.dueDate}
+                        </td>
 
-                      <td className="px-4 py-4">
-                        <Badge
-                          variant={
-                            invoice.data.status === 'paid'
-                              ? 'success'
-                              : 'secondary'
-                          }
-                        >
-                          {invoice.data.status}
-                        </Badge>
-                      </td>
+                        <td className="px-4 py-4 font-medium">
+                          {formatCurrency(
+                            invoice.data.total,
+                          )}
+                        </td>
 
-                      <td className="px-4 py-4">
-                        {invoice.data.status === 'draft' && (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() =>
-                              void handleStatusChange(
-                                invoice.recordId,
-                                'sent',
-                              )
+                        <td className="px-4 py-4">
+                          <Badge
+                            variant={
+                              displayStatus === 'paid'
+                                ? 'success'
+                                : 'secondary'
                             }
                           >
-                            Mark Sent
-                          </Button>
-                        )}
+                            {displayStatus}
+                          </Badge>
+                        </td>
 
-                        {invoice.data.status === 'sent' && (
-                          <Button
-                            size="sm"
-                            onClick={() =>
-                              void handleStatusChange(
-                                invoice.recordId,
-                                'paid',
-                              )
-                            }
-                          >
-                            Mark Paid
-                          </Button>
-                        )}
+                        <td className="px-4 py-4">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              to={`/invoices/${invoice.recordId}`}
+                            >
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                              >
+                                View
+                              </Button>
+                            </Link>
 
-                        {invoice.data.status === 'paid' && (
-                          <span className="text-sm text-muted-foreground">
-                            Completed
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                            {invoice.data.status ===
+                              'draft' && (
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() =>
+                                  void handleStatusChange(
+                                    invoice.recordId,
+                                    'sent',
+                                  )
+                                }
+                              >
+                                Mark Sent
+                              </Button>
+                            )}
+
+                            {invoice.data.status === 'draft' && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  void handleDeleteInvoice(
+                                    invoice.recordId,
+                                    invoice.data.invoiceNumber,
+                                  )
+                                }
+                                aria-label={`Delete ${invoice.data.invoiceNumber}`}
+                              >
+                                <Trash2 aria-hidden="true" />
+                                Delete
+                              </Button>
+                            )}
+
+                            {invoice.data.status ===
+                              'sent' && (
+                              <Button
+                                size="sm"
+                                onClick={() =>
+                                  void handleStatusChange(
+                                    invoice.recordId,
+                                    'paid',
+                                  )
+                                }
+                              >
+                                Mark Paid
+                              </Button>
+                            )}
+
+                            {invoice.data.status ===
+                              'paid' && (
+                              <span className="text-sm text-muted-foreground">
+                                Completed
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -345,7 +484,7 @@ export default function InvoicesPage() {
 
       <Modal
         open={showCreate}
-        onClose={() => setShowCreate(false)}
+        onClose={handleCloseCreate}
         size="sm"
       >
         <Modal.Header>
@@ -355,17 +494,24 @@ export default function InvoicesPage() {
         <Modal.Body>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="invoice-client" className="mb-2 block">
+              <Label
+                htmlFor="invoice-client"
+                className="mb-2 block"
+              >
                 Client
               </Label>
 
               <select
                 id="invoice-client"
                 value={clientId}
-                onChange={(event) => setClientId(event.target.value)}
+                onChange={(event) =>
+                  setClientId(event.target.value)
+                }
                 className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground"
               >
-                <option value="">Select client</option>
+                <option value="">
+                  Select client
+                </option>
 
                 {clients.map((client) => (
                   <option
@@ -379,7 +525,10 @@ export default function InvoicesPage() {
             </div>
 
             <div>
-              <Label htmlFor="due-date" className="mb-2 block">
+              <Label
+                htmlFor="due-date"
+                className="mb-2 block"
+              >
                 Due Date
               </Label>
 
@@ -387,7 +536,9 @@ export default function InvoicesPage() {
                 id="due-date"
                 type="date"
                 value={dueDate}
-                onChange={(event) => setDueDate(event.target.value)}
+                onChange={(event) =>
+                  setDueDate(event.target.value)
+                }
               />
             </div>
 
@@ -482,8 +633,12 @@ export default function InvoicesPage() {
                         <div className="flex items-center gap-3">
                           <span className="font-medium">
                             {formatCurrency(
-                              (Number(item.quantity) || 0) *
-                                (Number(item.unitPrice) || 0),
+                              (Number(
+                                item.quantity,
+                              ) || 0) *
+                                (Number(
+                                  item.unitPrice,
+                                ) || 0),
                             )}
                           </span>
 
@@ -492,7 +647,9 @@ export default function InvoicesPage() {
                               type="button"
                               variant="ghost"
                               size="sm"
-                              onClick={() => removeLineItem(index)}
+                              onClick={() =>
+                                removeLineItem(index)
+                              }
                             >
                               Remove
                             </Button>
@@ -514,14 +671,13 @@ export default function InvoicesPage() {
                 </span>
               </div>
             </div>
-            
           </div>
         </Modal.Body>
 
         <Modal.Footer>
           <Button
             variant="secondary"
-            onClick={() => setShowCreate(false)}
+            onClick={handleCloseCreate}
             disabled={creating}
           >
             Cancel
@@ -530,10 +686,11 @@ export default function InvoicesPage() {
           <Button
             onClick={() => void handleCreate()}
             loading={creating}
-            disabled={!clientId || !dueDate ||  total <= 0 ||  !lineItems.some(
-                  (item) => item.description.trim() &&
-                            Number(item.quantity) > 0 &&
-                            Number(item.unitPrice) >= 0,)
+            disabled={
+              !clientId ||
+              !dueDate ||
+              total <= 0 ||
+              !hasValidLineItem
             }
           >
             Create Invoice
