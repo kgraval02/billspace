@@ -1,0 +1,394 @@
+import { useState } from 'react'
+import { Building2, Mail, MapPin, Phone, Plus, Trash2 } from 'lucide-react'
+import { ROLES, useMutations, useQuery, useUser, type Role } from 'deepspace'
+import {
+  Button,
+  ConfirmModal,
+  EmptyState,
+  Input,
+  Label,
+  Modal,
+  Textarea,
+  useToast,
+} from '@/components/ui'
+
+interface Client {
+  name: string
+  company?: string
+  email?: string
+  phone?: string
+  address?: string
+  ownerId: string
+}
+
+type ClientRecord = {
+  recordId: string
+  data: Client
+  createdAt: string
+}
+
+interface ClientFormData {
+  name: string
+  company: string
+  email: string
+  phone: string
+  address: string
+}
+
+const EMPTY_FORM: ClientFormData = {
+  name: '',
+  company: '',
+  email: '',
+  phone: '',
+  address: '',
+}
+
+interface ClientModalProps {
+  open: boolean
+  onClose: () => void
+  onCreate: (data: ClientFormData) => Promise<boolean>
+}
+
+function ClientModal({ open, onClose, onCreate }: ClientModalProps) {
+  const [form, setForm] = useState<ClientFormData>(EMPTY_FORM)
+  const [creating, setCreating] = useState(false)
+
+  const updateField = (field: keyof ClientFormData, value: string) => {
+    setForm((current) => ({ ...current, [field]: value }))
+  }
+
+  const handleSubmit = async () => {
+    if (!form.name.trim() || creating) return
+
+    setCreating(true)
+
+    try {
+      const success = await onCreate({
+        name: form.name.trim(),
+        company: form.company.trim(),
+        email: form.email.trim(),
+        phone: form.phone.trim(),
+        address: form.address.trim(),
+      })
+
+      if (!success) return
+
+      setForm(EMPTY_FORM)
+      onClose()
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={creating ? () => undefined : onClose} size="sm">
+      <Modal.Header>
+        <Modal.Title>Add Client</Modal.Title>
+      </Modal.Header>
+
+      <Modal.Body>
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="client-name" className="mb-2 block">
+              Client name
+            </Label>
+            <Input
+              id="client-name"
+              value={form.name}
+              onChange={(event) => updateField('name', event.target.value)}
+              placeholder="Acme Corporation"
+              autoFocus
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="client-company" className="mb-2 block">
+              Company
+            </Label>
+            <Input
+              id="client-company"
+              value={form.company}
+              onChange={(event) => updateField('company', event.target.value)}
+              placeholder="Acme Inc."
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="client-email" className="mb-2 block">
+              Email
+            </Label>
+            <Input
+              id="client-email"
+              type="email"
+              value={form.email}
+              onChange={(event) => updateField('email', event.target.value)}
+              placeholder="billing@acme.com"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="client-phone" className="mb-2 block">
+              Phone
+            </Label>
+            <Input
+              id="client-phone"
+              value={form.phone}
+              onChange={(event) => updateField('phone', event.target.value)}
+              placeholder="+1 555 123 4567"
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="client-address" className="mb-2 block">
+              Address
+            </Label>
+            <Textarea
+              id="client-address"
+              value={form.address}
+              onChange={(event) => updateField('address', event.target.value)}
+              placeholder="Client billing address"
+              rows={3}
+            />
+          </div>
+        </div>
+      </Modal.Body>
+
+      <Modal.Footer>
+        <Button variant="secondary" onClick={onClose} disabled={creating}>
+          Cancel
+        </Button>
+
+        <Button
+          onClick={() => void handleSubmit()}
+          disabled={!form.name.trim()}
+          loading={creating}
+        >
+          Add Client
+        </Button>
+      </Modal.Footer>
+    </Modal>
+  )
+}
+
+export default function ClientsPage() {
+  const { user } = useUser()
+  const role = (user?.role ?? ROLES.VIEWER) as Role
+  const canCreate = role === ROLES.MEMBER || role === ROLES.ADMIN
+
+  const toast = useToast()
+
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<ClientRecord | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const { records: clients, status } = useQuery<Client>('clients', {
+    orderBy: 'createdAt',
+    orderDir: 'desc',
+  })
+
+  const { createConfirmed, removeConfirmed } =
+    useMutations<Client>('clients')
+
+  const handleCreate = async (data: ClientFormData): Promise<boolean> => {
+    if (!user) {
+      toast.error('Could not add client', 'Please sign in and try again.')
+      return false
+    }
+
+    try {
+      await createConfirmed({
+        ...data,
+        ownerId: user.id,
+      })
+
+      toast.success('Client added', `${data.name} was added successfully.`)
+      return true
+    } catch (error) {
+      toast.error(
+        'Could not add client',
+        error instanceof Error ? error.message : 'Please try again.',
+      )
+
+      return false
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget || deleting) return
+
+    setDeleting(true)
+
+    try {
+      await removeConfirmed(deleteTarget.recordId)
+
+      toast.success(
+        'Client deleted',
+        `${deleteTarget.data.name} was removed.`,
+      )
+
+      setDeleteTarget(null)
+    } catch (error) {
+      toast.error(
+        'Could not delete client',
+        error instanceof Error ? error.message : 'Please try again.',
+      )
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const isLoading = status === 'loading'
+
+  return (
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="border-b border-border bg-card/60">
+        <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-foreground">
+                Clients
+              </h1>
+
+              <p className="mt-1 text-sm text-muted-foreground">
+                Manage the customers you bill through BillSpace.
+              </p>
+            </div>
+
+            {canCreate && (
+              <Button onClick={() => setShowCreateModal(true)}>
+                <Plus aria-hidden="true" />
+                Add Client
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+        {isLoading ? (
+          <div
+            className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+            aria-label="Loading clients"
+            aria-busy="true"
+          >
+            {[1, 2, 3].map((item) => (
+              <div
+                key={item}
+                className="h-48 animate-pulse rounded-xl border border-border bg-muted/40"
+              />
+            ))}
+          </div>
+        ) : clients.length === 0 ? (
+          <EmptyState
+            title="No clients yet"
+            description="Add your first client to start creating invoices."
+            icon={<Building2 aria-hidden="true" />}
+            action={
+              canCreate
+                ? {
+                    label: 'Add client',
+                    onClick: () => setShowCreateModal(true),
+                  }
+                : undefined
+            }
+          />
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {clients.map((client) => {
+              const isOwner =
+                client.data.ownerId === user?.id || role === ROLES.ADMIN
+
+              return (
+                <article
+                  key={client.recordId}
+                  className="rounded-xl border border-border bg-card p-5"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h2 className="truncate font-semibold text-foreground">
+                        {client.data.name}
+                      </h2>
+
+                      {client.data.company && (
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          {client.data.company}
+                        </p>
+                      )}
+                    </div>
+
+                    {isOwner && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-8 text-muted-foreground hover:text-destructive"
+                        onClick={() => setDeleteTarget(client)}
+                        aria-label={`Delete ${client.data.name}`}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="mt-5 space-y-2 text-sm text-muted-foreground">
+                    {client.data.email && (
+                      <div className="flex items-center gap-2">
+                        <Mail className="size-4" aria-hidden="true" />
+                        <span className="truncate">
+                          {client.data.email}
+                        </span>
+                      </div>
+                    )}
+
+                    {client.data.phone && (
+                      <div className="flex items-center gap-2">
+                        <Phone className="size-4" aria-hidden="true" />
+                        <span>{client.data.phone}</span>
+                      </div>
+                    )}
+
+                    {client.data.address && (
+                      <div className="flex items-start gap-2">
+                        <MapPin
+                          className="mt-0.5 size-4 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>{client.data.address}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <p className="mt-5 text-xs text-muted-foreground">
+                    Added {new Date(client.createdAt).toLocaleDateString()}
+                  </p>
+                </article>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      <ClientModal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreate={handleCreate}
+      />
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        onClose={() => {
+          if (!deleting) setDeleteTarget(null)
+        }}
+        onConfirm={() => void handleDelete()}
+        title={
+          deleteTarget
+            ? `Delete ${deleteTarget.data.name}?`
+            : 'Delete client?'
+        }
+        description="This client will be permanently removed."
+        confirmText="Delete"
+        loading={deleting}
+      />
+    </div>
+  )
+}
+
